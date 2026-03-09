@@ -7,6 +7,7 @@
 #include <QDragEnterEvent>
 #include <QEvent>
 #include <QGuiApplication>
+#include <QLayout>
 #include <QMouseEvent>
 #include <QMimeData>
 #include <QPainter>
@@ -144,7 +145,7 @@ void DockWindow::resizeEvent(QResizeEvent *event) {
 
 void DockWindow::showEvent(QShowEvent *event) {
     QWidget::showEvent(event);
-    positionDock();
+    QTimer::singleShot(0, this, &DockWindow::positionDock);
 }
 
 void DockWindow::requestRebuildUi() {
@@ -184,8 +185,11 @@ void DockWindow::rebuildUi() {
         ++index;
     }
 
+    if (layout()) {
+        layout()->activate();
+    }
     adjustSize();
-    positionDock();
+    QTimer::singleShot(0, this, &DockWindow::positionDock);
     updateTargets();
     updateScales();
 }
@@ -276,14 +280,21 @@ void DockWindow::updateScales() {
 }
 
 void DockWindow::positionDock() {
+    if (layout()) {
+        layout()->activate();
+    }
+    if (width() <= 0 || height() <= 0) {
+        adjustSize();
+    }
+
     QScreen *screen = QGuiApplication::primaryScreen();
     if (!screen) {
         return;
     }
 
     const QRect screenGeometry = screen->geometry();
-    const int x = screenGeometry.left() + (screenGeometry.width() - width()) / 2;
-    const int y = screenGeometry.bottom() - height() - m_config.data().dockMarginBottom;
+    const int x = screenGeometry.x() + (screenGeometry.width() - width()) / 2;
+    const int y = screenGeometry.y() + screenGeometry.height() - height() - m_config.data().dockMarginBottom;
     move(x, y);
 }
 
