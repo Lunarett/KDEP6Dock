@@ -32,6 +32,7 @@ private slots:
     void onItemClicked(int index);
     void onItemRemoveRequested(int index);
     void tickAnimations();
+    void updateDodgeOverlapState();
 
 private:
     void updateTargets();
@@ -43,6 +44,8 @@ private:
     void clearCursorInfluence();
     void applyShellWindowHints();
     void applyOverlapPolicy();
+    void updateDockSlidePosition();
+    bool detectOverlapOnX11() const;
 
     Config m_config;
     DockModel m_model;
@@ -50,9 +53,14 @@ private:
     QWidget *m_container = nullptr;
     QHBoxLayout *m_layout = nullptr;
     QTimer m_animationTimer;
+    QTimer m_overlapCheckTimer;
     QElapsedTimer m_elapsed;
     double m_cursorXInContainer = -1.0;
     bool m_rebuildQueued = false;
     bool m_isX11 = false;
     bool m_isWayland = false;
+    int m_baseX = 0;
+    int m_baseY = 0;
+    double m_dodgeProgress = 0.0;
+    double m_dodgeTarget = 0.0;
 };

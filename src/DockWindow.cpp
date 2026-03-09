@@ -62,8 +62,10 @@ DockWindow::DockWindow(QWidget *parent)
 
     connect(&m_model, &DockModel::modelChanged, this, &DockWindow::requestRebuildUi);
     connect(&m_animationTimer, &QTimer::timeout, this, &DockWindow::tickAnimations);
+    connect(&m_overlapCheckTimer, &QTimer::timeout, this, &DockWindow::updateDodgeOverlapState);
 
     m_animationTimer.start(16);
+    m_overlapCheckTimer.start(150);
     m_elapsed.start();
 
     rebuildUi();
@@ -268,9 +270,42 @@ void DockWindow::tickAnimations() {
         changed |= item->tick(dt, duration);
     }
 
+    if (!qFuzzyCompare(m_dodgeProgress, m_dodgeTarget)) {
+        const double speed = dt / duration;
+        if (m_dodgeProgress < m_dodgeTarget) {
+            m_dodgeProgress = std::min(m_dodgeProgress + speed, m_dodgeTarget);
+        } else {
+            m_dodgeProgress = std::max(m_dodgeProgress - speed, m_dodgeTarget);
+        }
+        updateDockSlidePosition();
+    }
+
     if (changed) {
         updateScales();
     }
+}
+
+void DockWindow::updateDodgeOverlapState() {
+    if (m_config.data().overlapMode != "dodge") {
+        m_dodgeTarget = 0.0;
+        return;
+    }
+
+    if (!isVisible()) {
+        return;
+    }
+
+#if KDEP6DOCK_HAS_X11
+    if (m_isX11) {
+        m_dodgeTarget = detectOverlapOnX11() ? 1.0 : 0.0;
+        return;
+    }
+#endif
+
+    if (m_isWayland) {
+        qWarning() << "Dodge overlap detection is limited on Wayland for standalone clients; keeping dock visible.";
+    }
+    m_dodgeTarget = 0.0;
 }
 
 void DockWindow::updateTargets() {
@@ -316,9 +351,15 @@ void DockWindow::positionDock() {
     }
 
     const QRect screenGeometry = screen->geometry();
-    const int x = screenGeometry.x() + (screenGeometry.width() - width()) / 2;
-    const int y = screenGeometry.y() + screenGeometry.height() - height() - m_config.data().dockMarginBottom;
-    move(x, y);
+    m_baseX = screenGeometry.x() + (screenGeometry.width() - width()) / 2;
+    m_baseY = screenGeometry.y() + screenGeometry.height() - height() - m_config.data().dockMarginBottom;
+    updateDockSlidePosition();
+}
+
+void DockWindow::updateDockSlidePosition() {
+    const int hiddenOffset = height() + m_config.data().dockMarginBottom + 2;
+    const int y = m_baseY + qRound(hiddenOffset * m_dodgeProgress);
+    move(m_baseX, y);
 }
 
 int DockWindow::insertionIndexForPos(const QPoint &pos) const {
@@ -391,6 +432,7 @@ void DockWindow::applyOverlapPolicy() {
 
     if (mode == "ignore") {
         qDebug() << "Overlap mode: ignore (overlay behavior, no reserved desktop space).";
+        m_dodgeTarget = 0.0;
 #if KDEP6DOCK_HAS_X11
         if (m_isX11) {
             Display *display = XOpenDisplay(nullptr);
@@ -414,14 +456,25 @@ void DockWindow::applyOverlapPolicy() {
     }
 
     if (mode == "dodge") {
-        qWarning() << "Overlap mode 'dodge' is currently a placeholder and behaves like ignore.";
+        qDebug() << "Overlap mode: dodge (hide dock when overlapped by normal windows).";
+#if KDEP6DOCK_HAS_X11
+        if (m_isX11) {
+            updateDodgeOverlapState();
+            return;
+        }
+#endif
+        qWarning() << "Dodge mode currently implemented for X11/XWayland; fallback to ignore-like behavior on this platform.";
+        m_dodgeTarget = 0.0;
         return;
     }
 
     if (mode != "block") {
         qWarning() << "Unknown overlap mode:" << mode << "(using ignore behavior).";
+        m_dodgeTarget = 0.0;
         return;
     }
+
+    m_dodgeTarget = 0.0;
 
 #if KDEP6DOCK_HAS_X11
     if (m_isX11) {
@@ -458,7 +511,7 @@ void DockWindow::applyOverlapPolicy() {
         XFlush(display);
         XCloseDisplay(display);
 
-        qDebug() << "Overlap mode: block (X11 strut reservation applied).";
+        qDebug() << "Overlap mode: block (X11 strut reservation applied; may vary by WM/compositor).";
         return;
     }
 #endif
@@ -468,4 +521,97 @@ void DockWindow::applyOverlapPolicy() {
     } else {
         qWarning() << "Overlap mode 'block' unsupported on this platform/build; using overlay-like behavior.";
     }
+}
+
+bool DockWindow::detectOverlapOnX11() const {
+#if !KDEP6DOCK_HAS_X11
+    return false;
+#else
+    Display *display = XOpenDisplay(nullptr);
+    if (!display) {
+        return false;
+    }
+
+    const QRect dockRect(frameGeometry());
+    const Window selfWindow = static_cast<Window>(winId());
+
+    Window root = DefaultRootWindow(display);
+    Window rootReturned = 0;
+    Window parentReturned = 0;
+    Window *children = nullptr;
+    unsigned int childCount = 0;
+
+    if (!XQueryTree(display, root, &rootReturned, &parentReturned, &children, &childCount)) {
+        XCloseDisplay(display);
+        return false;
+    }
+
+    const Atom atomWindowType = XInternAtom(display, "_NET_WM_WINDOW_TYPE", True);
+    const Atom atomDock = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DOCK", True);
+    const Atom atomDesktop = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DESKTOP", True);
+    const Atom atomUtility = XInternAtom(display, "_NET_WM_WINDOW_TYPE_UTILITY", True);
+    const Atom atomToolbar = XInternAtom(display, "_NET_WM_WINDOW_TYPE_TOOLBAR", True);
+    const Atom atomMenu = XInternAtom(display, "_NET_WM_WINDOW_TYPE_MENU", True);
+    const Atom atomPopupMenu = XInternAtom(display, "_NET_WM_WINDOW_TYPE_POPUP_MENU", True);
+    const Atom atomDropdown = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU", True);
+    const Atom atomNotification = XInternAtom(display, "_NET_WM_WINDOW_TYPE_NOTIFICATION", True);
+
+    bool overlaps = false;
+
+    for (unsigned int i = 0; i < childCount && !overlaps; ++i) {
+        const Window w = children[i];
+        if (w == selfWindow) {
+            continue;
+        }
+
+        XWindowAttributes attr{};
+        if (!XGetWindowAttributes(display, w, &attr) || attr.map_state != IsViewable) {
+            continue;
+        }
+
+        bool skipWindow = false;
+        if (atomWindowType != None) {
+            Atom actualType = None;
+            int actualFormat = 0;
+            unsigned long nItems = 0;
+            unsigned long bytesAfter = 0;
+            unsigned char *prop = nullptr;
+            if (XGetWindowProperty(display, w, atomWindowType, 0, 8, False, XA_ATOM,
+                                   &actualType, &actualFormat, &nItems, &bytesAfter, &prop) == Success && prop) {
+                const Atom *types = reinterpret_cast<const Atom *>(prop);
+                for (unsigned long j = 0; j < nItems; ++j) {
+                    const Atom t = types[j];
+                    if (t == atomDock || t == atomDesktop || t == atomUtility || t == atomToolbar ||
+                        t == atomMenu || t == atomPopupMenu || t == atomDropdown || t == atomNotification) {
+                        skipWindow = true;
+                        break;
+                    }
+                }
+                XFree(prop);
+            }
+        }
+
+        if (skipWindow) {
+            continue;
+        }
+
+        int absX = 0;
+        int absY = 0;
+        Window child = 0;
+        if (!XTranslateCoordinates(display, w, root, 0, 0, &absX, &absY, &child)) {
+            continue;
+        }
+
+        QRect windowRect(absX, absY, attr.width, attr.height);
+        if (windowRect.isValid() && windowRect.intersects(dockRect)) {
+            overlaps = true;
+        }
+    }
+
+    if (children) {
+        XFree(children);
+    }
+    XCloseDisplay(display);
+    return overlaps;
+#endif
 }

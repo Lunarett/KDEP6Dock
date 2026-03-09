@@ -103,7 +103,7 @@ cp config/sample-config.json ~/.config/kdep6dock/config.json
 - `dockPadding`: inner dock padding.
 - `dockMarginBottom`: distance from bottom edge.
 - `backgroundOpacity`: dock background alpha.
-- `overlapMode`: one of `ignore`, `block`, `dodge` (currently placeholder).
+- `overlapMode`: one of `ignore`, `dodge`, `block` (block is experimental).
 - `pinnedApps`: ordered pinned app list (`desktopFile`, `name`, `icon`, `exec`).
 
 ---
@@ -111,14 +111,14 @@ cp config/sample-config.json ~/.config/kdep6dock/config.json
 
 ### Overlap mode behavior
 
-- `ignore` (fully implemented): overlay mode; no desktop work-area reservation.
-- `block` (implemented on X11/XWayland): publishes `_NET_WM_STRUT` / `_NET_WM_STRUT_PARTIAL` so maximized windows can avoid the dock.
-- `dodge` (placeholder): currently behaves like `ignore` and logs a warning.
+- `ignore` (fully implemented): overlay mode; dock stays visible over windows.
+- `dodge` (implemented on X11/XWayland): dock checks overlap against normal windows and smoothly slides down when overlapped, then slides back up when clear.
+- `block` (experimental): attempts `_NET_WM_STRUT` / `_NET_WM_STRUT_PARTIAL`; behavior depends on WM/compositor and may be unreliable.
 
 Platform notes:
 
-- On **X11/XWayland**, KDEP6Dock applies dock/panel hints (`_NET_WM_WINDOW_TYPE_DOCK`) and can reserve space in `block` mode.
-- On **Wayland**, compositor policy limits standalone clients; KDEP6Dock still uses non-taskbar/non-focus Qt flags, but reliable reserved-space behavior is not guaranteed without compositor-specific protocols.
+- On **X11/XWayland**, KDEP6Dock applies dock/panel hints (`_NET_WM_WINDOW_TYPE_DOCK`) and supports overlap polling for `dodge` plus strut-based `block` attempts.
+- On **Wayland**, compositor policy limits standalone clients; reliable global overlap detection and reserved-space behavior are not guaranteed for standalone Qt clients.
 
 ## Testing guide
 
