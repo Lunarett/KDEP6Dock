@@ -18,7 +18,6 @@
 #include <cmath>
 
 #if defined(Q_OS_LINUX) && __has_include(<X11/Xatom.h>)
-#include <QNativeInterface>
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #define KDEP6DOCK_HAS_X11 1
@@ -366,13 +365,7 @@ void DockWindow::applyShellWindowHints() {
         return;
     }
 
-    auto *x11App = QGuiApplication::nativeInterface<QNativeInterface::QX11Application>();
-    if (!x11App) {
-        qWarning() << "X11 interface unavailable; skipping X11-specific dock type hint.";
-        return;
-    }
-
-    Display *display = x11App->display();
+    Display *display = XOpenDisplay(nullptr);
     if (!display) {
         qWarning() << "No X11 display found; skipping X11-specific shell hints.";
         return;
@@ -384,6 +377,7 @@ void DockWindow::applyShellWindowHints() {
     XChangeProperty(display, window, atomWindowType, XA_ATOM, 32, PropModeReplace,
                     reinterpret_cast<const unsigned char *>(&atomWindowTypeDock), 1);
     XFlush(display);
+    XCloseDisplay(display);
     qDebug() << "Applied _NET_WM_WINDOW_TYPE_DOCK on X11.";
 #else
     if (m_isX11) {
@@ -399,11 +393,10 @@ void DockWindow::applyOverlapPolicy() {
         qDebug() << "Overlap mode: ignore (overlay behavior, no reserved desktop space).";
 #if KDEP6DOCK_HAS_X11
         if (m_isX11) {
-            auto *x11App = QGuiApplication::nativeInterface<QNativeInterface::QX11Application>();
-            if (!x11App || !x11App->display()) {
+            Display *display = XOpenDisplay(nullptr);
+            if (!display) {
                 return;
             }
-            Display *display = x11App->display();
             Window window = static_cast<Window>(winId());
             const Atom atomStrut = XInternAtom(display, "_NET_WM_STRUT", False);
             const Atom atomStrutPartial = XInternAtom(display, "_NET_WM_STRUT_PARTIAL", False);
@@ -414,6 +407,7 @@ void DockWindow::applyOverlapPolicy() {
             XChangeProperty(display, window, atomStrutPartial, XA_CARDINAL, 32, PropModeReplace,
                             reinterpret_cast<const unsigned char *>(strutPartial), 12);
             XFlush(display);
+            XCloseDisplay(display);
         }
 #endif
         return;
@@ -431,16 +425,15 @@ void DockWindow::applyOverlapPolicy() {
 
 #if KDEP6DOCK_HAS_X11
     if (m_isX11) {
-        auto *x11App = QGuiApplication::nativeInterface<QNativeInterface::QX11Application>();
-        if (!x11App || !x11App->display()) {
+        Display *display = XOpenDisplay(nullptr);
+        if (!display) {
             qWarning() << "X11 display unavailable; cannot apply block overlap reservations.";
             return;
         }
-
-        Display *display = x11App->display();
         Window window = static_cast<Window>(winId());
         QScreen *screen = QGuiApplication::primaryScreen();
         if (!screen) {
+            XCloseDisplay(display);
             return;
         }
 
@@ -463,6 +456,7 @@ void DockWindow::applyOverlapPolicy() {
         XChangeProperty(display, window, atomStrutPartial, XA_CARDINAL, 32, PropModeReplace,
                         reinterpret_cast<const unsigned char *>(strutPartial), 12);
         XFlush(display);
+        XCloseDisplay(display);
 
         qDebug() << "Overlap mode: block (X11 strut reservation applied).";
         return;
