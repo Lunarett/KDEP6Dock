@@ -12,6 +12,7 @@
 #include <QPainter>
 #include <QProcess>
 #include <QScreen>
+#include <QStringList>
 #include <QTimer>
 #include <QUrl>
 #include <algorithm>
@@ -529,10 +530,11 @@ bool DockWindow::detectOverlapOnX11() const {
 #else
     Display *display = XOpenDisplay(nullptr);
     if (!display) {
+        qWarning() << "Dodge detect: failed to open X11 display.";
         return false;
     }
 
-    const QRect dockRect(frameGeometry());
+    const QRect dockRect(m_baseX, m_baseY, width(), height());
     const Window selfWindow = static_cast<Window>(winId());
 
     Window root = DefaultRootWindow(display);
@@ -542,6 +544,7 @@ bool DockWindow::detectOverlapOnX11() const {
     unsigned int childCount = 0;
 
     if (!XQueryTree(display, root, &rootReturned, &parentReturned, &children, &childCount)) {
+        qWarning() << "Dodge detect: XQueryTree failed.";
         XCloseDisplay(display);
         return false;
     }
@@ -555,35 +558,68 @@ bool DockWindow::detectOverlapOnX11() const {
     const Atom atomPopupMenu = XInternAtom(display, "_NET_WM_WINDOW_TYPE_POPUP_MENU", True);
     const Atom atomDropdown = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU", True);
     const Atom atomNotification = XInternAtom(display, "_NET_WM_WINDOW_TYPE_NOTIFICATION", True);
+    const Atom atomTooltip = XInternAtom(display, "_NET_WM_WINDOW_TYPE_TOOLTIP", True);
+
+    auto atomToName = [&](Atom atom) -> QString {
+        if (atom == None) {
+            return "None";
+        }
+        char *name = XGetAtomName(display, atom);
+        if (!name) {
+            return QString("atom-%1").arg(static_cast<unsigned long>(atom));
+        }
+        const QString result = QString::fromLatin1(name);
+        XFree(name);
+        return result;
+    };
+
+    qDebug() << "Dodge detect: dock visible rect" << dockRect << "children" << childCount;
 
     bool overlaps = false;
 
-    for (unsigned int i = 0; i < childCount && !overlaps; ++i) {
+    for (unsigned int i = 0; i < childCount; ++i) {
         const Window w = children[i];
+        QString skipReason;
+
         if (w == selfWindow) {
-            continue;
+            skipReason = "self-window";
         }
 
         XWindowAttributes attr{};
-        if (!XGetWindowAttributes(display, w, &attr) || attr.map_state != IsViewable) {
-            continue;
+        if (skipReason.isEmpty() && !XGetWindowAttributes(display, w, &attr)) {
+            skipReason = "XGetWindowAttributes-failed";
         }
 
-        bool skipWindow = false;
-        if (atomWindowType != None) {
+        if (skipReason.isEmpty() && attr.map_state != IsViewable) {
+            skipReason = "not-viewable";
+        }
+
+        if (skipReason.isEmpty() && attr.width < 80 && attr.height < 80) {
+            skipReason = "tiny-helper-window";
+        }
+
+        Window transientFor = 0;
+        if (skipReason.isEmpty() && XGetTransientForHint(display, w, &transientFor)) {
+            skipReason = "transient-window";
+        }
+
+        QStringList typeNames;
+        if (skipReason.isEmpty() && atomWindowType != None) {
             Atom actualType = None;
             int actualFormat = 0;
             unsigned long nItems = 0;
             unsigned long bytesAfter = 0;
             unsigned char *prop = nullptr;
-            if (XGetWindowProperty(display, w, atomWindowType, 0, 8, False, XA_ATOM,
+            if (XGetWindowProperty(display, w, atomWindowType, 0, 16, False, XA_ATOM,
                                    &actualType, &actualFormat, &nItems, &bytesAfter, &prop) == Success && prop) {
                 const Atom *types = reinterpret_cast<const Atom *>(prop);
                 for (unsigned long j = 0; j < nItems; ++j) {
                     const Atom t = types[j];
+                    typeNames << atomToName(t);
                     if (t == atomDock || t == atomDesktop || t == atomUtility || t == atomToolbar ||
-                        t == atomMenu || t == atomPopupMenu || t == atomDropdown || t == atomNotification) {
-                        skipWindow = true;
+                        t == atomMenu || t == atomPopupMenu || t == atomDropdown || t == atomNotification ||
+                        t == atomTooltip) {
+                        skipReason = QString("filtered-type:%1").arg(atomToName(t));
                         break;
                     }
                 }
@@ -591,27 +627,48 @@ bool DockWindow::detectOverlapOnX11() const {
             }
         }
 
-        if (skipWindow) {
-            continue;
-        }
-
         int absX = 0;
         int absY = 0;
         Window child = 0;
-        if (!XTranslateCoordinates(display, w, root, 0, 0, &absX, &absY, &child)) {
-            continue;
+        QRect windowRect;
+        bool hasRect = false;
+
+        if (skipReason.isEmpty()) {
+            if (!XTranslateCoordinates(display, w, root, 0, 0, &absX, &absY, &child)) {
+                skipReason = "translate-failed";
+            } else {
+                windowRect = QRect(absX, absY, attr.width, attr.height);
+                hasRect = windowRect.isValid();
+                if (!hasRect) {
+                    skipReason = "invalid-rect";
+                }
+            }
         }
 
-        QRect windowRect(absX, absY, attr.width, attr.height);
-        if (windowRect.isValid() && windowRect.intersects(dockRect)) {
-            overlaps = true;
+        bool intersects = false;
+        if (skipReason.isEmpty() && hasRect) {
+            intersects = windowRect.intersects(dockRect);
+            if (intersects) {
+                overlaps = true;
+            }
         }
+
+        qDebug() << "Dodge candidate"
+                 << "id=0x" + QString::number(static_cast<qulonglong>(w), 16)
+                 << "mapped=" << (attr.map_state == IsViewable)
+                 << "rect=" << (hasRect ? windowRect : QRect())
+                 << "types=" << typeNames.join(",")
+                 << "ignored=" << !skipReason.isEmpty()
+                 << "reason=" << skipReason
+                 << "intersects=" << intersects;
     }
 
     if (children) {
         XFree(children);
     }
     XCloseDisplay(display);
+
+    qDebug() << "Dodge detect result:" << overlaps;
     return overlaps;
 #endif
 }
