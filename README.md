@@ -7,8 +7,8 @@ It intentionally targets an MVP scope: clean behavior, straightforward architect
 ## What it supports
 
 - Frameless horizontal dock window suitable for bottom-screen placement.
-- Smooth icon magnification with neighbor influence.
-- Continuous hover/unhover animation per item using a single `progress` value (`0.0..1.0`) that reverses from current state.
+- Smooth icon magnification with continuous cursor-position tracking and neighbor influence.
+- Continuous per-item animation using a single `progress` value (`0.0..1.0`) that always moves from current state toward a target and reverses smoothly when direction changes.
 - Launch pinned apps by clicking icons.
 - Reorder pinned apps with internal drag-and-drop.
 - Add apps by dropping `.desktop` files onto the dock.
@@ -115,8 +115,8 @@ Expected:
 
 ### 2) Verify hover animation
 
-- Move pointer onto an icon slowly.
-- Expected: hovered icon scales up smoothly; neighbors scale with lower intensity.
+- Move pointer left/right over an icon without leaving it.
+- Expected: magnification changes continuously with cursor X position (no stepped enter/leave behavior), and neighboring icons react smoothly.
 
 ### 3) Verify reverse-from-current behavior (critical)
 

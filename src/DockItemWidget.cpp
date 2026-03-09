@@ -72,25 +72,18 @@ void DockItemWidget::setCurrentScale(double scale) {
     update();
 }
 
-void DockItemWidget::enterEvent(QEnterEvent *event) {
-    Q_UNUSED(event)
-    emit hovered(m_index);
-}
-
-void DockItemWidget::leaveEvent(QEvent *event) {
-    Q_UNUSED(event)
-    emit unhovered(m_index);
-}
-
 void DockItemWidget::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
         m_pressed = true;
+        m_dragging = false;
         m_pressPos = event->pos();
     }
     QWidget::mousePressEvent(event);
 }
 
 void DockItemWidget::mouseMoveEvent(QMouseEvent *event) {
+    emit pointerMovedGlobal(mapToGlobal(event->pos()));
+
     if (!m_pressed || !(event->buttons() & Qt::LeftButton)) {
         QWidget::mouseMoveEvent(event);
         return;
@@ -101,20 +94,23 @@ void DockItemWidget::mouseMoveEvent(QMouseEvent *event) {
         return;
     }
 
+    m_dragging = true;
     auto *drag = new QDrag(this);
     auto *mime = new QMimeData();
     mime->setData("application/x-kdep6dock-index", QByteArray::number(m_index));
     drag->setMimeData(mime);
     drag->exec(Qt::MoveAction);
-    emit dragStarted();
+    m_dragging = false;
+    m_pressed = false;
 }
 
 void DockItemWidget::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton && m_pressed) {
-        if ((event->pos() - m_pressPos).manhattanLength() < QApplication::startDragDistance()) {
+        if (!m_dragging && (event->pos() - m_pressPos).manhattanLength() < QApplication::startDragDistance()) {
             emit clicked(m_index);
         }
         m_pressed = false;
+        m_dragging = false;
     }
     QWidget::mouseReleaseEvent(event);
 }

@@ -6,6 +6,7 @@
 
 #include <QElapsedTimer>
 #include <QHBoxLayout>
+#include <QPointF>
 #include <QTimer>
 #include <QWidget>
 
@@ -20,11 +21,15 @@ protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void leaveEvent(QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private slots:
+    void requestRebuildUi();
     void rebuildUi();
-    void onHovered(int index);
-    void onUnhovered(int index);
+    void onItemPointerMoved(const QPoint &globalPos);
     void onItemClicked(int index);
     void onItemRemoveRequested(int index);
     void tickAnimations();
@@ -36,6 +41,7 @@ private:
     int insertionIndexForPos(const QPoint &pos) const;
     bool addDesktopFile(const QString &path);
     void syncModelToConfig();
+    void clearCursorInfluence();
 
     Config m_config;
     DockModel m_model;
@@ -44,5 +50,6 @@ private:
     QHBoxLayout *m_layout = nullptr;
     QTimer m_animationTimer;
     QElapsedTimer m_elapsed;
-    int m_hoveredIndex = -1;
+    double m_cursorXInContainer = -1.0;
+    bool m_rebuildQueued = false;
 };

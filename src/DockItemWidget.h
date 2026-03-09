@@ -2,7 +2,6 @@
 
 #include "DockModel.h"
 
-#include <QElapsedTimer>
 #include <QIcon>
 #include <QWidget>
 
@@ -24,15 +23,11 @@ public:
     void setCurrentScale(double scale);
 
 signals:
-    void hovered(int index);
-    void unhovered(int index);
+    void pointerMovedGlobal(const QPoint &globalPos);
     void clicked(int index);
     void removeRequested(int index);
-    void dragStarted();
 
 protected:
-    void enterEvent(QEnterEvent *event) override;
-    void leaveEvent(QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -49,5 +44,6 @@ private:
     double m_currentScale = 1.0;
     QPoint m_pressPos;
     bool m_pressed = false;
+    bool m_dragging = false;
     QIcon m_icon;
 };

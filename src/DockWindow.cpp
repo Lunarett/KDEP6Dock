@@ -4,24 +4,24 @@
 
 #include <QApplication>
 #include <QCursor>
-#include <algorithm>
 #include <QDragEnterEvent>
-#include <QFileInfo>
+#include <QEvent>
 #include <QGuiApplication>
-#include <QHBoxLayout>
-#include <QJsonDocument>
-#include <QMenu>
-#include <QMimeData>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QProcess>
 #include <QScreen>
+#include <QTimer>
 #include <QUrl>
+#include <algorithm>
+#include <cmath>
 
 DockWindow::DockWindow(QWidget *parent)
     : QWidget(parent) {
     setAcceptDrops(true);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setWindowFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint);
+    setMouseTracking(true);
 
     m_config.load();
     m_model.setApps(m_config.data().pinnedApps);
@@ -31,12 +31,15 @@ DockWindow::DockWindow(QWidget *parent)
                                     m_config.data().dockPadding, m_config.data().dockPadding);
 
     m_container = new QWidget(this);
+    m_container->setMouseTracking(true);
+    m_container->installEventFilter(this);
+
     m_layout = new QHBoxLayout(m_container);
     m_layout->setContentsMargins(0, 0, 0, 0);
     m_layout->setSpacing(m_config.data().spacing);
     outerLayout->addWidget(m_container);
 
-    connect(&m_model, &DockModel::modelChanged, this, &DockWindow::rebuildUi);
+    connect(&m_model, &DockModel::modelChanged, this, &DockWindow::requestRebuildUi);
     connect(&m_animationTimer, &QTimer::timeout, this, &DockWindow::tickAnimations);
 
     m_animationTimer.start(16);
@@ -77,7 +80,7 @@ void DockWindow::dropEvent(QDropEvent *event) {
     if (event->mimeData()->hasFormat("application/x-kdep6dock-index")) {
         const int from = event->mimeData()->data("application/x-kdep6dock-index").toInt();
         int to = insertionIndexForPos(event->position().toPoint());
-        to = qBound(0, to, m_model.count() - 1);
+        to = qBound(0, to, m_model.count());
         if (from < to) {
             --to;
         }
@@ -114,7 +117,47 @@ void DockWindow::dropEvent(QDropEvent *event) {
     }
 }
 
+bool DockWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == m_container) {
+        if (event->type() == QEvent::MouseMove) {
+            auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            m_cursorXInContainer = mouseEvent->position().x();
+            updateTargets();
+        } else if (event->type() == QEvent::Leave) {
+            clearCursorInfluence();
+        }
+    }
+
+    return QWidget::eventFilter(watched, event);
+}
+
+void DockWindow::leaveEvent(QEvent *event) {
+    Q_UNUSED(event)
+    clearCursorInfluence();
+}
+
+void DockWindow::resizeEvent(QResizeEvent *event) {
+    QWidget::resizeEvent(event);
+    positionDock();
+}
+
+void DockWindow::showEvent(QShowEvent *event) {
+    QWidget::showEvent(event);
+    positionDock();
+}
+
+void DockWindow::requestRebuildUi() {
+    if (m_rebuildQueued) {
+        return;
+    }
+
+    m_rebuildQueued = true;
+    QTimer::singleShot(0, this, &DockWindow::rebuildUi);
+}
+
 void DockWindow::rebuildUi() {
+    m_rebuildQueued = false;
+
     qDeleteAll(m_itemWidgets);
     m_itemWidgets.clear();
 
@@ -131,8 +174,7 @@ void DockWindow::rebuildUi() {
         item->setMaxScale(m_config.data().maxScale);
         item->setFixedSize(slotSize + 8, slotSize + 8);
 
-        connect(item, &DockItemWidget::hovered, this, &DockWindow::onHovered);
-        connect(item, &DockItemWidget::unhovered, this, &DockWindow::onUnhovered);
+        connect(item, &DockItemWidget::pointerMovedGlobal, this, &DockWindow::onItemPointerMoved);
         connect(item, &DockItemWidget::clicked, this, &DockWindow::onItemClicked);
         connect(item, &DockItemWidget::removeRequested, this, &DockWindow::onItemRemoveRequested);
 
@@ -147,25 +189,13 @@ void DockWindow::rebuildUi() {
     updateScales();
 }
 
-void DockWindow::onHovered(int index) {
-    m_hoveredIndex = index;
-    updateTargets();
-}
-
-void DockWindow::onUnhovered(int index) {
-    Q_UNUSED(index)
-    QPoint globalPos = QCursor::pos();
-    if (!frameGeometry().contains(globalPos)) {
-        m_hoveredIndex = -1;
-    } else {
-        QWidget *child = childAt(mapFromGlobal(globalPos));
-        DockItemWidget *item = nullptr;
-        while (child && !item) {
-            item = qobject_cast<DockItemWidget *>(child);
-            child = child->parentWidget();
-        }
-        m_hoveredIndex = item ? item->index() : -1;
+void DockWindow::onItemPointerMoved(const QPoint &globalPos) {
+    if (!m_container) {
+        return;
     }
+
+    const QPoint local = m_container->mapFromGlobal(globalPos);
+    m_cursorXInContainer = local.x();
     updateTargets();
 }
 
@@ -216,12 +246,21 @@ void DockWindow::tickAnimations() {
 }
 
 void DockWindow::updateTargets() {
+    if (m_itemWidgets.isEmpty()) {
+        return;
+    }
+
+    const bool cursorActive = m_cursorXInContainer >= 0.0;
+    const double iconSpan = m_config.data().baseIconSize + m_config.data().spacing;
+    const double influenceRadius = std::max(1.0, iconSpan * std::max(1, m_config.data().neighborRadius));
+
     for (DockItemWidget *item : m_itemWidgets) {
-        const int distance = std::abs(item->index() - m_hoveredIndex);
         double target = 0.0;
-        if (m_hoveredIndex >= 0 && distance <= m_config.data().neighborRadius) {
-            const double radius = std::max(1, m_config.data().neighborRadius);
-            target = 1.0 - (distance / radius);
+        if (cursorActive) {
+            const double centerX = item->geometry().center().x();
+            const double distance = std::abs(centerX - m_cursorXInContainer);
+            const double normalized = distance / influenceRadius;
+            target = std::exp(-(normalized * normalized));
         }
         item->setTargetProgress(target);
     }
@@ -241,9 +280,9 @@ void DockWindow::positionDock() {
         return;
     }
 
-    const QRect g = screen->availableGeometry();
-    const int x = g.x() + (g.width() - width()) / 2;
-    const int y = g.bottom() - height() - m_config.data().dockMarginBottom;
+    const QRect screenGeometry = screen->geometry();
+    const int x = screenGeometry.left() + (screenGeometry.width() - width()) / 2;
+    const int y = screenGeometry.bottom() - height() - m_config.data().dockMarginBottom;
     move(x, y);
 }
 
@@ -272,4 +311,13 @@ bool DockWindow::addDesktopFile(const QString &path) {
 
 void DockWindow::syncModelToConfig() {
     m_config.data().pinnedApps = m_model.apps();
+}
+
+void DockWindow::clearCursorInfluence() {
+    if (m_cursorXInContainer < 0.0) {
+        return;
+    }
+
+    m_cursorXInContainer = -1.0;
+    updateTargets();
 }
