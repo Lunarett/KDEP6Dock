@@ -6,7 +6,7 @@ It intentionally targets an MVP scope: clean behavior, straightforward architect
 
 ## What it supports
 
-- Frameless horizontal dock window suitable for bottom-screen placement.
+- Frameless shell-style dock window (hidden from normal app switchers/taskbar as far as platform policy allows) suitable for bottom-screen placement.
 - Smooth icon magnification with continuous cursor-position tracking and neighbor influence.
 - Continuous per-item animation using a single `progress` value (`0.0..1.0`) that always moves from current state toward a target and reverses smoothly when direction changes.
 - Launch pinned apps by clicking icons.
@@ -103,9 +103,22 @@ cp config/sample-config.json ~/.config/kdep6dock/config.json
 - `dockPadding`: inner dock padding.
 - `dockMarginBottom`: distance from bottom edge.
 - `backgroundOpacity`: dock background alpha.
+- `overlapMode`: one of `ignore`, `block`, `dodge` (currently placeholder).
 - `pinnedApps`: ordered pinned app list (`desktopFile`, `name`, `icon`, `exec`).
 
 ---
+
+
+### Overlap mode behavior
+
+- `ignore` (fully implemented): overlay mode; no desktop work-area reservation.
+- `block` (implemented on X11/XWayland): publishes `_NET_WM_STRUT` / `_NET_WM_STRUT_PARTIAL` so maximized windows can avoid the dock.
+- `dodge` (placeholder): currently behaves like `ignore` and logs a warning.
+
+Platform notes:
+
+- On **X11/XWayland**, KDEP6Dock applies dock/panel hints (`_NET_WM_WINDOW_TYPE_DOCK`) and can reserve space in `block` mode.
+- On **Wayland**, compositor policy limits standalone clients; KDEP6Dock still uses non-taskbar/non-focus Qt flags, but reliable reserved-space behavior is not guaranteed without compositor-specific protocols.
 
 ## Testing guide
 
@@ -155,7 +168,7 @@ Expected:
 
 ### 8) Plasma 6 behavior notes
 
-- The app is a normal top-level Qt window with dock-like flags.
+- The app uses shell-like window flags (`Qt::Tool`, `Qt::FramelessWindowHint`, no-focus flags) and X11 dock hints when available.
 - On Wayland, strict compositor policies may limit “true dock” behavior compared to desktop shell-integrated components.
 - On X11, staying on top may feel closer to traditional docks.
 

@@ -44,6 +44,11 @@ bool Config::load() {
     m_data.dockMarginBottom = obj.value("dockMarginBottom").toInt(m_data.dockMarginBottom);
     m_data.backgroundOpacity = obj.value("backgroundOpacity").toDouble(m_data.backgroundOpacity);
     m_data.position = obj.value("position").toString(m_data.position);
+    m_data.overlapMode = obj.value("overlapMode").toString(m_data.overlapMode).toLower();
+    if (m_data.overlapMode != "ignore" && m_data.overlapMode != "block" && m_data.overlapMode != "dodge") {
+        qWarning() << "Invalid overlapMode, falling back to ignore:" << m_data.overlapMode;
+        m_data.overlapMode = "ignore";
+    }
 
     m_data.pinnedApps.clear();
     for (const QJsonValue &value : obj.value("pinnedApps").toArray()) {
@@ -68,6 +73,7 @@ bool Config::save() const {
     obj.insert("dockMarginBottom", m_data.dockMarginBottom);
     obj.insert("backgroundOpacity", m_data.backgroundOpacity);
     obj.insert("position", m_data.position);
+    obj.insert("overlapMode", m_data.overlapMode);
 
     QJsonArray apps;
     for (const DockAppEntry &app : m_data.pinnedApps) {

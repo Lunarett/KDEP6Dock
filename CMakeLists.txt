@@ -8,6 +8,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Gui Core)
+find_package(X11 QUIET)
 
 add_executable(kdep6dock
     src/main.cpp
@@ -23,3 +24,7 @@ target_link_libraries(kdep6dock PRIVATE Qt6::Widgets Qt6::Gui Qt6::Core)
 
 install(TARGETS kdep6dock RUNTIME DESTINATION bin)
 install(FILES config/sample-config.json DESTINATION share/kdep6dock)
+
+if(X11_FOUND)
+    target_link_libraries(kdep6dock PRIVATE X11::X11)
+endif()

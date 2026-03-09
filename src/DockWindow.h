@@ -6,7 +6,6 @@
 
 #include <QElapsedTimer>
 #include <QHBoxLayout>
-#include <QPointF>
 #include <QTimer>
 #include <QWidget>
 
@@ -42,6 +41,8 @@ private:
     bool addDesktopFile(const QString &path);
     void syncModelToConfig();
     void clearCursorInfluence();
+    void applyShellWindowHints();
+    void applyOverlapPolicy();
 
     Config m_config;
     DockModel m_model;
@@ -52,4 +53,6 @@ private:
     QElapsedTimer m_elapsed;
     double m_cursorXInContainer = -1.0;
     bool m_rebuildQueued = false;
+    bool m_isX11 = false;
+    bool m_isWayland = false;
 };

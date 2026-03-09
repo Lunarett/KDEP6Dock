@@ -3,7 +3,6 @@
 #include "DesktopEntry.h"
 
 #include <QApplication>
-#include <QCursor>
 #include <QDragEnterEvent>
 #include <QEvent>
 #include <QGuiApplication>
@@ -18,12 +17,33 @@
 #include <algorithm>
 #include <cmath>
 
+#if defined(Q_OS_LINUX) && __has_include(<X11/Xatom.h>)
+#include <QNativeInterface>
+#include <X11/Xatom.h>
+#include <X11/Xlib.h>
+#define KDEP6DOCK_HAS_X11 1
+#else
+#define KDEP6DOCK_HAS_X11 0
+#endif
+
 DockWindow::DockWindow(QWidget *parent)
     : QWidget(parent) {
     setAcceptDrops(true);
     setAttribute(Qt::WA_TranslucentBackground, true);
-    setWindowFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint);
+    setAttribute(Qt::WA_X11DoNotAcceptFocus, true);
+    setAttribute(Qt::WA_X11NetWmWindowTypeDock, true);
     setMouseTracking(true);
+
+    setWindowFlags(Qt::FramelessWindowHint |
+                   Qt::Tool |
+                   Qt::WindowStaysOnTopHint |
+                   Qt::WindowDoesNotAcceptFocus);
+
+    const QString platform = QGuiApplication::platformName().toLower();
+    m_isWayland = platform.contains("wayland");
+    m_isX11 = platform.contains("xcb") || platform.contains("x11");
+    qDebug() << "Platform:" << platform
+             << "(x11=" << m_isX11 << ", wayland=" << m_isWayland << ")";
 
     m_config.load();
     m_model.setApps(m_config.data().pinnedApps);
@@ -141,11 +161,14 @@ void DockWindow::leaveEvent(QEvent *event) {
 void DockWindow::resizeEvent(QResizeEvent *event) {
     QWidget::resizeEvent(event);
     positionDock();
+    applyOverlapPolicy();
 }
 
 void DockWindow::showEvent(QShowEvent *event) {
     QWidget::showEvent(event);
     QTimer::singleShot(0, this, &DockWindow::positionDock);
+    QTimer::singleShot(0, this, &DockWindow::applyShellWindowHints);
+    QTimer::singleShot(0, this, &DockWindow::applyOverlapPolicy);
 }
 
 void DockWindow::requestRebuildUi() {
@@ -190,6 +213,7 @@ void DockWindow::rebuildUi() {
     }
     adjustSize();
     QTimer::singleShot(0, this, &DockWindow::positionDock);
+    QTimer::singleShot(0, this, &DockWindow::applyOverlapPolicy);
     updateTargets();
     updateScales();
 }
@@ -332,4 +356,122 @@ void DockWindow::clearCursorInfluence() {
 
     m_cursorXInContainer = -1.0;
     updateTargets();
+}
+
+void DockWindow::applyShellWindowHints() {
+    qDebug() << "Applying shell-like window hints (frameless, no-focus, tool/dock-like).";
+
+#if KDEP6DOCK_HAS_X11
+    if (!m_isX11) {
+        return;
+    }
+
+    auto *x11App = QGuiApplication::nativeInterface<QNativeInterface::QX11Application>();
+    if (!x11App) {
+        qWarning() << "X11 interface unavailable; skipping X11-specific dock type hint.";
+        return;
+    }
+
+    Display *display = x11App->display();
+    if (!display) {
+        qWarning() << "No X11 display found; skipping X11-specific shell hints.";
+        return;
+    }
+
+    Window window = static_cast<Window>(winId());
+    const Atom atomWindowType = XInternAtom(display, "_NET_WM_WINDOW_TYPE", False);
+    const Atom atomWindowTypeDock = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DOCK", False);
+    XChangeProperty(display, window, atomWindowType, XA_ATOM, 32, PropModeReplace,
+                    reinterpret_cast<const unsigned char *>(&atomWindowTypeDock), 1);
+    XFlush(display);
+    qDebug() << "Applied _NET_WM_WINDOW_TYPE_DOCK on X11.";
+#else
+    if (m_isX11) {
+        qWarning() << "Built without X11 headers; advanced dock hints unavailable on X11.";
+    }
+#endif
+}
+
+void DockWindow::applyOverlapPolicy() {
+    const QString mode = m_config.data().overlapMode;
+
+    if (mode == "ignore") {
+        qDebug() << "Overlap mode: ignore (overlay behavior, no reserved desktop space).";
+#if KDEP6DOCK_HAS_X11
+        if (m_isX11) {
+            auto *x11App = QGuiApplication::nativeInterface<QNativeInterface::QX11Application>();
+            if (!x11App || !x11App->display()) {
+                return;
+            }
+            Display *display = x11App->display();
+            Window window = static_cast<Window>(winId());
+            const Atom atomStrut = XInternAtom(display, "_NET_WM_STRUT", False);
+            const Atom atomStrutPartial = XInternAtom(display, "_NET_WM_STRUT_PARTIAL", False);
+            unsigned long strut[4] = {0, 0, 0, 0};
+            unsigned long strutPartial[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            XChangeProperty(display, window, atomStrut, XA_CARDINAL, 32, PropModeReplace,
+                            reinterpret_cast<const unsigned char *>(strut), 4);
+            XChangeProperty(display, window, atomStrutPartial, XA_CARDINAL, 32, PropModeReplace,
+                            reinterpret_cast<const unsigned char *>(strutPartial), 12);
+            XFlush(display);
+        }
+#endif
+        return;
+    }
+
+    if (mode == "dodge") {
+        qWarning() << "Overlap mode 'dodge' is currently a placeholder and behaves like ignore.";
+        return;
+    }
+
+    if (mode != "block") {
+        qWarning() << "Unknown overlap mode:" << mode << "(using ignore behavior).";
+        return;
+    }
+
+#if KDEP6DOCK_HAS_X11
+    if (m_isX11) {
+        auto *x11App = QGuiApplication::nativeInterface<QNativeInterface::QX11Application>();
+        if (!x11App || !x11App->display()) {
+            qWarning() << "X11 display unavailable; cannot apply block overlap reservations.";
+            return;
+        }
+
+        Display *display = x11App->display();
+        Window window = static_cast<Window>(winId());
+        QScreen *screen = QGuiApplication::primaryScreen();
+        if (!screen) {
+            return;
+        }
+
+        const QRect g = screen->geometry();
+        const unsigned long reserve = static_cast<unsigned long>(height() + m_config.data().dockMarginBottom);
+
+        unsigned long strut[4] = {0, 0, 0, reserve};
+        unsigned long strutPartial[12] = {
+            0, 0, 0, reserve,
+            0, 0, 0, 0,
+            0, 0,
+            static_cast<unsigned long>(std::max(0, g.x())),
+            static_cast<unsigned long>(std::max(0, g.x() + g.width() - 1))
+        };
+
+        const Atom atomStrut = XInternAtom(display, "_NET_WM_STRUT", False);
+        const Atom atomStrutPartial = XInternAtom(display, "_NET_WM_STRUT_PARTIAL", False);
+        XChangeProperty(display, window, atomStrut, XA_CARDINAL, 32, PropModeReplace,
+                        reinterpret_cast<const unsigned char *>(strut), 4);
+        XChangeProperty(display, window, atomStrutPartial, XA_CARDINAL, 32, PropModeReplace,
+                        reinterpret_cast<const unsigned char *>(strutPartial), 12);
+        XFlush(display);
+
+        qDebug() << "Overlap mode: block (X11 strut reservation applied).";
+        return;
+    }
+#endif
+
+    if (m_isWayland) {
+        qWarning() << "Overlap mode 'block' requested under Wayland. Standalone Qt windows cannot reliably reserve screen space; using overlay-like behavior.";
+    } else {
+        qWarning() << "Overlap mode 'block' unsupported on this platform/build; using overlay-like behavior.";
+    }
 }

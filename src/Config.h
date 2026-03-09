@@ -15,6 +15,7 @@ struct DockConfig {
     int dockMarginBottom = 24;
     double backgroundOpacity = 0.65;
     QString position = "bottom";
+    QString overlapMode = "ignore";
     QVector<DockAppEntry> pinnedApps;
 };
 
