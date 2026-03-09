@@ -53,6 +53,12 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
+Convenience build script (captures failures into `crash/`):
+
+```bash
+./scripts/build.sh
+```
+
 Run:
 
 ```bash
@@ -168,6 +174,12 @@ Run from terminal to see logs:
 
 ```bash
 ./build/kdep6dock
+```
+
+If build fails using `./scripts/build.sh`, inspect the generated failure report under:
+
+```text
+crash/build-failure-<timestamp>.txt
 ```
 
 Common issues:

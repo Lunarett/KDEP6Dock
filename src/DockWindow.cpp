@@ -8,6 +8,7 @@
 #include <QEvent>
 #include <QGuiApplication>
 #include <QMouseEvent>
+#include <QMimeData>
 #include <QPainter>
 #include <QProcess>
 #include <QScreen>
