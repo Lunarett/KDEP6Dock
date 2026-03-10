@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+      http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name=""/>
+  <group name="General">
+    <entry name="baseIconSize" type="Int">
+      <default>48</default>
+    </entry>
+    <entry name="maxScale" type="Double">
+      <default>1.6</default>
+    </entry>
+    <entry name="spacing" type="Int">
+      <default>10</default>
+    </entry>
+    <entry name="animationDurationMs" type="Int">
+      <default>180</default>
+    </entry>
+    <entry name="neighborRadius" type="Int">
+      <default>2</default>
+    </entry>
+    <entry name="dockPadding" type="Int">
+      <default>12</default>
+    </entry>
+    <entry name="backgroundOpacity" type="Double">
+      <default>0.65</default>
+    </entry>
+    <entry name="cornerRadius" type="Int">
+      <default>18</default>
+    </entry>
+  </group>
+</kcfg>

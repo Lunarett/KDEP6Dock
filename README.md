@@ -1,222 +1,131 @@
-# KDEP6Dock
+# KDEP6Dock (Plasma-integrated)
 
-KDEP6Dock is a small standalone macOS-like dock built with **C++17 + Qt 6 Widgets** for **KDE Plasma 6**.
+KDEP6Dock is now a **KDE Plasma 6 dock component** (Plasmoid-first architecture), not primarily a standalone window app.
 
-It intentionally targets an MVP scope: clean behavior, straightforward architecture, and practical KDE usage without trying to replicate Latte Dock complexity.
+## Architecture choice
 
-## What it supports
+**Chosen architecture: custom Plasmoid + KDE Task Manager backend reuse (hybrid).**
 
-- Frameless shell-style dock window (hidden from normal app switchers/taskbar as far as platform policy allows) suitable for bottom-screen placement.
-- Smooth icon magnification with continuous cursor-position tracking and neighbor influence.
-- Continuous per-item animation using a single `progress` value (`0.0..1.0`) that always moves from current state toward a target and reverses smoothly when direction changes.
-- Launch pinned apps by clicking icons.
-- Reorder pinned apps with internal drag-and-drop.
-- Add apps by dropping `.desktop` files onto the dock.
-- Remove apps with right-click -> **Remove from Dock**.
-- JSON config persistence for settings and pinned apps.
+Why this was chosen:
 
-## What it intentionally does not support (yet)
+- Plasma already solves panel placement, visibility policy, monitor handling, and shell integration.
+- KDE Task Manager already solves app/task model behavior better than a custom standalone window.
+- We can focus custom code on dock visuals + magnification animation.
 
-- Task manager behavior (running window tracking, badges, grouped instances).
-- Window previews, bouncing, or advanced effects.
-- Auto-hide and panel-replacement features.
-- Plasma applet/panel integration (this is a standalone app).
+So this project now prioritizes:
+
+1. **Plasma integration** (panel-hosted component)
+2. **KDE task backend reuse** (`org.kde.taskmanager` model)
+3. **Custom rendering and magnification animation layer** in QML
 
 ---
 
-## Requirements
+## What is reused from KDE now
 
-Target runtime:
+Inside the plasmoid (`plasmoid/package/contents/ui/main.qml`), task data and actions come from:
 
-- KDE Plasma 6 desktop on Linux (Wayland or X11).
+- `TaskManager.TasksModel` (`org.kde.taskmanager`)
+- task activation/close requests through model APIs
 
-Build/runtime dependencies:
-
-- CMake >= 3.16
-- C++ compiler with C++17 support (GCC/Clang)
-- Qt 6 development packages (`Core`, `Gui`, `Widgets`)
-
-Example package hints (distribution-specific names vary):
-
-- Ubuntu/Debian-like: `cmake`, `g++`, `qt6-base-dev`
-- Fedora-like: `cmake`, `gcc-c++`, `qt6-qtbase-devel`
-- Arch-like: `cmake`, `gcc`, `qt6-base`
+This is a **direct backend/model reuse** approach (not reimplemented app/task tracking).
 
 ---
 
-## Build instructions
+## What this project now customizes
 
-From the project root:
+- continuous cursor-position magnification
+- neighboring icon influence
+- smooth animation back to resting state
+- floating rounded dock visuals
+- spacing/padding/opacity styling
+
+---
+
+## Current status of old standalone app
+
+The old Qt Widgets executable path still exists as **legacy fallback** but is no longer the primary target.
+
+- `BUILD_STANDALONE_DOCK=OFF` by default in CMake.
+- Plasma package install is now the primary installation path.
+
+---
+
+## Configuration model
+
+For Plasma mode, settings are now **Plasma-native config entries** (`contents/config/main.xml`) with the same style tunables:
+
+- `baseIconSize`
+- `maxScale`
+- `neighborRadius`
+- `animationDurationMs`
+- `spacing`
+- `dockPadding`
+- `backgroundOpacity`
+- `cornerRadius`
+
+`config/sample-config.json` is kept for legacy compatibility/migration reference.
+
+---
+
+## Build / install
+
+From repo root:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-```
-
-Convenience build script (captures failures into `crash/`):
-
-```bash
-./scripts/build.sh
-```
-
-Run:
-
-```bash
-./build/kdep6dock
-```
-
-Optional install:
-
-```bash
 cmake --install build --prefix ~/.local
-~/.local/bin/kdep6dock
 ```
 
----
-
-## Configuration
-
-Default runtime config path:
+This installs the plasmoid package to:
 
 ```text
-~/.config/kdep6dock/config.json
+~/.local/share/plasma/plasmoids/org.kdep6dock.magnifyingdock
 ```
 
-The dock loads this file on startup and saves updates when pins/settings change.
-
-If the file does not exist, defaults are used; a file is written after state changes (e.g., add/remove/reorder).
-
-You can start with `config/sample-config.json` and copy it:
+If needed, legacy standalone binary can still be built with:
 
 ```bash
-mkdir -p ~/.config/kdep6dock
-cp config/sample-config.json ~/.config/kdep6dock/config.json
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_STANDALONE_DOCK=ON
+cmake --build build -j
 ```
-
-### Key config fields
-
-- `baseIconSize`: base icon size in px.
-- `maxScale`: maximum hovered scale factor.
-- `spacing`: pixel spacing between slots.
-- `animationDurationMs`: approximate time for progress to move between 0 and 1.
-- `neighborRadius`: number of neighboring items receiving falloff influence.
-- `dockPadding`: inner dock padding.
-- `dockMarginBottom`: distance from bottom edge.
-- `backgroundOpacity`: dock background alpha.
-- `overlapMode`: one of `ignore`, `dodge`, `block` (block is experimental).
-- `pinnedApps`: ordered pinned app list (`desktopFile`, `name`, `icon`, `exec`).
 
 ---
 
+## Running in Plasma panel
 
-### Overlap mode behavior
+1. Restart Plasma shell or relogin (after first install).
+2. Enter panel edit mode.
+3. Add widgets -> search for **KDEP6Dock**.
+4. Add it to panel (or a floating panel setup).
 
-- `ignore` (fully implemented): overlay mode; dock stays visible over windows.
-- `dodge` (implemented on X11/XWayland): dock checks overlap against normal windows and smoothly slides down when overlapped, then slides back up when clear.
-- `block` (experimental): attempts `_NET_WM_STRUT` / `_NET_WM_STRUT_PARTIAL`; behavior depends on WM/compositor and may be unreliable.
-
-Platform notes:
-
-- On **X11/XWayland**, KDEP6Dock applies dock/panel hints (`_NET_WM_WINDOW_TYPE_DOCK`) and supports overlap polling for `dodge` plus strut-based `block` attempts.
-- On **Wayland**, compositor policy limits standalone clients; reliable global overlap detection and reserved-space behavior are not guaranteed for standalone Qt clients.
-
-## Testing guide
-
-### 1) Launch
-
-```bash
-./build/kdep6dock
-```
-
-Expected:
-
-- A rounded, frameless dock appears near the bottom center of the primary screen.
-
-### 2) Verify hover animation
-
-- Move pointer left/right over an icon without leaving it.
-- Expected: magnification changes continuously with cursor X position (no stepped enter/leave behavior), and neighboring icons react smoothly.
-
-### 3) Verify reverse-from-current behavior (critical)
-
-- Move pointer over an icon and then away before animation completes.
-- Move quickly back and forth across adjacent icons.
-- Expected: each icon progresses continuously from its **current** animation value toward new target (no snap, no restart from 0/1).
-
-### 4) Verify drag reorder
-
-- Click-hold an icon, drag left/right, drop.
-- Expected: icon order changes.
-- Restart dock and verify new order persists.
-
-### 5) Verify adding apps via `.desktop` drop
-
-- Drag one or more `.desktop` files from e.g. `/usr/share/applications/` onto the dock.
-- Expected: valid entries are appended and visible.
-- Restart dock and verify pinned entries persist.
-
-### 6) Verify remove app
-
-- Right-click icon -> **Remove from Dock**.
-- Expected: icon disappears and removal persists after restart.
-
-### 7) Verify config persistence
-
-- Edit `~/.config/kdep6dock/config.json` manually (e.g., `maxScale`, `baseIconSize`).
-- Restart dock.
-- Expected: visual behavior and geometry reflect edited values.
-
-### 8) Plasma 6 behavior notes
-
-- The app uses shell-like window flags (`Qt::Tool`, `Qt::FramelessWindowHint`, no-focus flags) and X11 dock hints when available.
-- On Wayland, strict compositor policies may limit “true dock” behavior compared to desktop shell-integrated components.
-- On X11, staying on top may feel closer to traditional docks.
+Plasma now handles panel geometry/policies. KDEP6Dock handles visual magnification layer.
 
 ---
 
-## Debugging notes
+## Testing checklist
 
-KDEP6Dock uses `qDebug()` / `qWarning()` logs for:
-
-- Config load/save outcomes.
-- Desktop file parsing errors.
-- Drag/drop operations.
-- App launch failures.
-
-Run from terminal to see logs:
-
-```bash
-./build/kdep6dock
-```
-
-If build fails using `./scripts/build.sh`, inspect the generated failure report under:
-
-```text
-crash/build-failure-<timestamp>.txt
-```
-
-Common issues:
-
-- **Invalid JSON config**: dock falls back to defaults and logs warning.
-- **Dropped file ignored**: non-`.desktop` drops are ignored.
-- **Missing icons**: icon theme lookup may fail if icon name is unknown.
-- **Launch fails**: bad or unavailable `exec` command in pinned app entry.
+1. Add/remove/reorder tasks in panel context and verify behavior comes from Plasma Task Manager backend.
+2. Move mouse across icons and verify smooth continuous magnification.
+3. Verify neighbors scale smoothly and return to rest when mouse leaves.
+4. Launch/activate apps from dock and verify expected Plasma behavior.
+5. Verify style tunables update via plasmoid config.
 
 ---
 
-## Known limitations
+## Platform notes
 
-- Dock placement uses primary screen only.
-- No auto-hide.
-- No task manager/running-window integration.
-- Wayland may constrain some always-on-top/dock semantics for standalone apps.
+- **Wayland:** preferred for Plasma-native panel behavior (handled by compositor/shell).
+- **X11/XWayland:** works, but shell behavior still managed by Plasma rather than standalone-window hacks.
 
 ---
 
-## Future improvements
+## Future work
 
-- Optional settings dialog (editing current JSON fields).
-- Better icon fallback handling (desktop file icon paths, pixmap caching).
-- Multi-monitor selection and per-screen docking.
-- Optional remove-by-drag-out behavior.
-- Optional launch animations.
+- Add explicit section layout support:
+  - pinned/running apps
+  - separator
+  - minimized area
+  - trash
+- Add plasmoid config UI pages for style presets.
+- Deepen integration with task manager features while preserving custom dock visuals.
