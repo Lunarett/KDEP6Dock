@@ -12,11 +12,14 @@
 #include <QPainter>
 #include <QProcess>
 #include <QScreen>
+#include <QSet>
+#include <QWindow>
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
 #include <algorithm>
 #include <cmath>
+#include <unistd.h>
 
 #if defined(Q_OS_LINUX) && __has_include(<X11/Xatom.h>)
 #include <X11/Xatom.h>
@@ -401,6 +404,9 @@ void DockWindow::clearCursorInfluence() {
 
 void DockWindow::applyShellWindowHints() {
     qDebug() << "Applying shell-like window hints (frameless, no-focus, tool/dock-like).";
+    qDebug() << "Dock startup IDs"
+             << "QWidget=0x" + QString::number(static_cast<qulonglong>(winId()), 16)
+             << "QWindow=0x" + QString::number(static_cast<qulonglong>(windowHandle() ? windowHandle()->winId() : 0), 16);
 
 #if KDEP6DOCK_HAS_X11
     if (!m_isX11) {
@@ -535,13 +541,65 @@ bool DockWindow::detectOverlapOnX11() const {
     }
 
     const QRect dockRect(m_baseX, m_baseY, width(), height());
-    const Window selfWindow = static_cast<Window>(winId());
+    const Window widgetWindow = static_cast<Window>(winId());
+    const Window qwindowId = windowHandle() ? static_cast<Window>(windowHandle()->winId()) : 0;
+    const pid_t selfPid = getpid();
+
+    QSet<Window> dockRelatedWindows;
+    dockRelatedWindows.insert(widgetWindow);
+    if (qwindowId != 0) {
+        dockRelatedWindows.insert(qwindowId);
+    }
 
     Window root = DefaultRootWindow(display);
     Window rootReturned = 0;
     Window parentReturned = 0;
     Window *children = nullptr;
     unsigned int childCount = 0;
+
+    auto addDockWindowTree = [&](Window start) {
+        if (!start) {
+            return;
+        }
+
+        Window current = start;
+        for (int depth = 0; depth < 8 && current != 0; ++depth) {
+            Window rootOut = 0;
+            Window parentOut = 0;
+            Window *childrenOut = nullptr;
+            unsigned int childCountOut = 0;
+            if (!XQueryTree(display, current, &rootOut, &parentOut, &childrenOut, &childCountOut)) {
+                break;
+            }
+
+            dockRelatedWindows.insert(current);
+            if (parentOut != 0 && parentOut != rootOut) {
+                dockRelatedWindows.insert(parentOut);
+            }
+            for (unsigned int c = 0; c < childCountOut; ++c) {
+                dockRelatedWindows.insert(childrenOut[c]);
+            }
+
+            if (childrenOut) {
+                XFree(childrenOut);
+            }
+
+            if (parentOut == 0 || parentOut == rootOut || parentOut == current) {
+                break;
+            }
+            current = parentOut;
+        }
+    };
+
+    addDockWindowTree(widgetWindow);
+    if (qwindowId != 0 && qwindowId != widgetWindow) {
+        addDockWindowTree(qwindowId);
+    }
+
+    qDebug() << "Dodge self IDs"
+             << "QWidget=0x" + QString::number(static_cast<qulonglong>(widgetWindow), 16)
+             << "QWindow=0x" + QString::number(static_cast<qulonglong>(qwindowId), 16)
+             << "tracked-count=" << dockRelatedWindows.size();
 
     if (!XQueryTree(display, root, &rootReturned, &parentReturned, &children, &childCount)) {
         qWarning() << "Dodge detect: XQueryTree failed.";
@@ -559,6 +617,7 @@ bool DockWindow::detectOverlapOnX11() const {
     const Atom atomDropdown = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU", True);
     const Atom atomNotification = XInternAtom(display, "_NET_WM_WINDOW_TYPE_NOTIFICATION", True);
     const Atom atomTooltip = XInternAtom(display, "_NET_WM_WINDOW_TYPE_TOOLTIP", True);
+    const Atom atomPid = XInternAtom(display, "_NET_WM_PID", True);
 
     auto atomToName = [&](Atom atom) -> QString {
         if (atom == None) {
@@ -581,8 +640,8 @@ bool DockWindow::detectOverlapOnX11() const {
         const Window w = children[i];
         QString skipReason;
 
-        if (w == selfWindow) {
-            skipReason = "self-window";
+        if (dockRelatedWindows.contains(w)) {
+            skipReason = "dock-related-window-id";
         }
 
         XWindowAttributes attr{};
@@ -600,7 +659,27 @@ bool DockWindow::detectOverlapOnX11() const {
 
         Window transientFor = 0;
         if (skipReason.isEmpty() && XGetTransientForHint(display, w, &transientFor)) {
-            skipReason = "transient-window";
+            if (dockRelatedWindows.contains(transientFor)) {
+                skipReason = "transient-for-dock";
+            } else {
+                skipReason = "transient-window";
+            }
+        }
+
+        long windowPid = -1;
+        if (skipReason.isEmpty() && atomPid != None) {
+            Atom actualType = None;
+            int actualFormat = 0;
+            unsigned long nItems = 0;
+            unsigned long bytesAfter = 0;
+            unsigned char *prop = nullptr;
+            if (XGetWindowProperty(display, w, atomPid, 0, 1, False, XA_CARDINAL,
+                                   &actualType, &actualFormat, &nItems, &bytesAfter, &prop) == Success && prop) {
+                if (nItems > 0) {
+                    windowPid = static_cast<long>(*reinterpret_cast<unsigned long *>(prop));
+                }
+                XFree(prop);
+            }
         }
 
         QStringList typeNames;
@@ -647,6 +726,12 @@ bool DockWindow::detectOverlapOnX11() const {
 
         bool intersects = false;
         if (skipReason.isEmpty() && hasRect) {
+            if (windowPid == static_cast<long>(selfPid) && windowRect == dockRect) {
+                skipReason = "self-process-geometry-match";
+            }
+        }
+
+        if (skipReason.isEmpty() && hasRect) {
             intersects = windowRect.intersects(dockRect);
             if (intersects) {
                 overlaps = true;
@@ -657,6 +742,7 @@ bool DockWindow::detectOverlapOnX11() const {
                  << "id=0x" + QString::number(static_cast<qulonglong>(w), 16)
                  << "mapped=" << (attr.map_state == IsViewable)
                  << "rect=" << (hasRect ? windowRect : QRect())
+                 << "pid=" << windowPid
                  << "types=" << typeNames.join(",")
                  << "ignored=" << !skipReason.isEmpty()
                  << "reason=" << skipReason
