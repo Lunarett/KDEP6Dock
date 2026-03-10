@@ -1,0 +1,18 @@
+{
+  "KPackageStructure": "Plasma/Applet",
+  "KPlugin": {
+    "Id": "org.kdep6dock.magnifyingdock",
+    "Name": "KDEP6Dock",
+    "Description": "Plasma-integrated magnifying dock that reuses Task Manager backend behavior",
+    "Version": "0.2.0",
+    "License": "MIT",
+    "Authors": [
+      {
+        "Name": "KDEP6Dock Contributors"
+      }
+    ],
+    "Category": "Windows and Tasks",
+    "EnabledByDefault": true
+  },
+  "X-Plasma-API-Minimum-Version": "6.0"
+}

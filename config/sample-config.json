@@ -1,0 +1,26 @@
+{
+  "baseIconSize": 48,
+  "maxScale": 1.6,
+  "spacing": 10,
+  "animationDurationMs": 180,
+  "neighborRadius": 2,
+  "dockPadding": 12,
+  "dockMarginBottom": 24,
+  "backgroundOpacity": 0.65,
+  "position": "bottom",
+  "pinnedApps": [
+    {
+      "desktopFile": "/usr/share/applications/org.kde.dolphin.desktop",
+      "name": "Dolphin",
+      "icon": "system-file-manager",
+      "exec": "dolphin"
+    },
+    {
+      "desktopFile": "/usr/share/applications/org.kde.konsole.desktop",
+      "name": "Konsole",
+      "icon": "utilities-terminal",
+      "exec": "konsole"
+    }
+  ],
+  "overlapMode": "ignore"
+}
